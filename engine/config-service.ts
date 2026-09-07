@@ -42,20 +42,18 @@ export function maskHeliusUrl(u: string): string {
 export const PUBLIC_SOLANA_RPC_URL = "https://api.mainnet-beta.solana.com";
 
 /**
- * Additional keyless public Solana RPC used to spread keyless load. PublicNode
- * now requires a personal token (2026-08-25 403: Indexed requests require a
- * personal token — Get one at https://www.allnodes.com/publicnode) so it is
- * not keyless anymore; Lava's gateway is keyless and verified reachable as
- * the no-auth fallback for the public-primary case.
+ * Second keyless public RPC so a keyless primary still has somewhere to
+ * fail over. api.mainnet.solana.com: 7 failures/24h live vs 7192 for the
+ * previous lava.build default (2026-09-07) — lava is saturated, drop it.
  */
-export const PUBLICNODE_SOLANA_RPC_URL = "https://solana.lava.build";
+export const KEYLESS_FALLBACK_RPC_URL = "https://api.mainnet.solana.com";
 
 /**
  * Resolve the RPC fallback URL. When the operator left `SOLANA_RPC_FALLBACK_URL`
  * empty, default it to keyless public Solana RPC so a (shared) primary key's
  * 429s/5xx actually fail over instead of erroring — and so a keyless primary
  * still has a second keyless endpoint to round-robin against. Pure + testable.
- * - empty configured fallback + primary already the public RPC → PublicNode (no self-fallback)
+ * - empty configured fallback + primary already the public RPC → keyless fallback (no self-fallback)
  * - empty configured fallback + test mode → "" (tests never touch the network)
  * - empty configured fallback + production + non-public primary → public RPC
  * - non-empty configured fallback → used as-is
@@ -68,7 +66,7 @@ export function resolveRpcFallbackUrl(
   if (configuredFallback.trim()) return configuredFallback;
   if (isTest) return "";
   return primaryUrl.trim() === PUBLIC_SOLANA_RPC_URL
-    ? PUBLICNODE_SOLANA_RPC_URL
+    ? KEYLESS_FALLBACK_RPC_URL
     : PUBLIC_SOLANA_RPC_URL;
 }
 
