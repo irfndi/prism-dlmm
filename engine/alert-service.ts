@@ -97,7 +97,12 @@ function parseNumber(raw: string | null): number | null {
 }
 
 /** Request headers; `X-Install-Id` is set only when an install id exists. */
-type AlertHeaders = Record<string, string>;
+/** Alert API headers: Content-Type + Bearer auth always sent; install id only when known. */
+type AlertHeaders = {
+  "Content-Type": string;
+  Authorization: string;
+  "X-Install-Id"?: string;
+};
 
 function postAlert(
   apiKey: string,

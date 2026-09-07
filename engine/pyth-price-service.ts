@@ -241,7 +241,10 @@ function readCachedPythPrice(cacheKey: string, ttlMs: number, nowMs: number): nu
 }
 
 /** Optional request headers built without ever assigning `undefined`. */
-type PythHeaders = Record<string, string>;
+/** Pyth Hermes headers: Bearer auth only for a non-empty key (keyless otherwise). */
+type PythHeaders = {
+  Authorization?: string;
+};
 /** Build request headers, adding bearer auth only for a non-empty key. */
 function buildPythHeaders(apiKey: string | undefined): PythHeaders {
   const headers: PythHeaders = {};

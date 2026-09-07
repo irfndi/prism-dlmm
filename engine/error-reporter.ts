@@ -67,7 +67,11 @@ export interface BatchPayload {
 }
 
 /** Request headers built without ever assigning `undefined`. */
-type ErrorBatchHeaders = Record<string, string>;
+/** Error-batch headers: JSON content type always sent; Bearer auth only when a key is configured. */
+type ErrorBatchHeaders = {
+  "Content-Type": string;
+  Authorization?: string;
+};
 
 // ─── Defaults ────────────────────────────────────────────────────────────────
 

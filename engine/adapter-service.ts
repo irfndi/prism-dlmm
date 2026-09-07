@@ -706,13 +706,18 @@ type TokenPriceMap = Readonly<Record<string, number>>;
 const EMPTY_TOKEN_PRICES: TokenPriceMap = Object.create(null);
 
 /** Known-mint decimals lookup (SOL, USDC, USDT, …). */
-type KnownMintDecimals = Readonly<Record<string, { symbol: string; decimals: number }>>;
+type KnownMintDecimals = ReadonlyMap<string, { symbol: string; decimals: number }>;
 
 /** Hardcoded fallback USD prices for a handful of well-known mints. */
-type FallbackPriceMap = Readonly<Record<string, number>>;
+type FallbackPriceMap = ReadonlyMap<string, number>;
 
 /** HTTP request headers keyed by header name. */
-type RequestHeaders = Record<string, string>;
+/** Outbound JSON headers: content type always sent; key/auth legs set conditionally per endpoint. */
+type RequestHeaders = {
+  "Content-Type": string;
+  "x-api-key"?: string;
+  Authorization?: string;
+};
 
 const OBJECT_TAG = "[object Object]";
 const NUMBER_TAG = "[object Number]";
@@ -1474,7 +1479,7 @@ function resolveNegativeCacheLayer(
     negativePriceCache.delete(mint);
     return false;
   }
-  bookNegativeCachePrice(mint, prices, useFallback, fallbackPrices[mint], provenanceOut);
+  bookNegativeCachePrice(mint, prices, useFallback, fallbackPrices.get(mint), provenanceOut);
   return true;
 }
 
@@ -2271,14 +2276,14 @@ export const makeAdapterLive = (
       // fails with Effect.fail, so callers must handle the error. For
       // non-Helius RPCs we use the SPL Token program (parsed account info),
       // which returns decimals for any valid SPL mint.
-      const KNOWN_MINT_DECIMALS: KnownMintDecimals = {
-        [SOL_MINT]: { symbol: "SOL", decimals: 9 },
-        [USDC_MINT]: { symbol: "USDC", decimals: 6 },
-        Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB: { symbol: "USDT", decimals: 6 },
-        "7i5KKsX2weiTkry7jA4ZwSu2SmtUa4rCCi4t8U9b3bR2": { symbol: "USDS", decimals: 6 },
-        J1toso1uCk3RLmjorhTtrVwY9HJ7X8V9yYk6U5Yf9sW: { symbol: "JitoSOL", decimals: 9 },
-        JUPyiwrYJFskUPiHa7hkeR8VUtAeFoSYbKedZNsDvCN: { symbol: "JUP", decimals: 6 },
-      };
+      const KNOWN_MINT_DECIMALS: KnownMintDecimals = new Map([
+        [SOL_MINT, { symbol: "SOL", decimals: 9 }],
+        [USDC_MINT, { symbol: "USDC", decimals: 6 }],
+        ["Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB", { symbol: "USDT", decimals: 6 }],
+        ["7i5KKsX2weiTkry7jA4ZwSu2SmtUa4rCCi4t8U9b3bR2", { symbol: "USDS", decimals: 6 }],
+        ["J1toso1uCk3RLmjorhTtrVwY9HJ7X8V9yYk6U5Yf9sW", { symbol: "JitoSOL", decimals: 9 }],
+        ["JUPyiwrYJFskUPiHa7hkeR8VUtAeFoSYbKedZNsDvCN", { symbol: "JUP", decimals: 6 }],
+      ]);
 
       // parseHeliusTokenMeta lives at module scope (shared metadata parser).
 
@@ -2333,7 +2338,7 @@ export const makeAdapterLive = (
           if (cachedEntry) return cachedEntry.meta;
 
           // Fast path: known mints (SOL, USDC, USDT, etc.) — no network.
-          const known = KNOWN_MINT_DECIMALS[mint];
+          const known = KNOWN_MINT_DECIMALS.get(mint);
           if (known) {
             yield* persistTokenMeta(mint, known);
             return known;
@@ -2355,14 +2360,14 @@ export const makeAdapterLive = (
 
       // ─── Price fetching ────────────────────────────────────────────────────
 
-      const fallbackPrices: FallbackPriceMap = {
-        [SOL_MINT]: 165,
-        [USDC_MINT]: 1.0,
-        Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB: 1.0,
-        "7i5KKsX2weiTkry7jA4ZwSu2SmtUa4rCCi4t8U9b3bR2": 1.0,
-        J1toso1uCk3RLmjorhTtrVwY9HJ7X8V9yYk6U5Yf9sW: 1.0,
-        JUPyiwrYJFskUPiHa7hkeR8VUtAeFoSYbKedZNsDvCN: 1.0,
-      };
+      const fallbackPrices: FallbackPriceMap = new Map([
+        [SOL_MINT, 165],
+        [USDC_MINT, 1.0],
+        ["Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB", 1.0],
+        ["7i5KKsX2weiTkry7jA4ZwSu2SmtUa4rCCi4t8U9b3bR2", 1.0],
+        ["J1toso1uCk3RLmjorhTtrVwY9HJ7X8V9yYk6U5Yf9sW", 1.0],
+        ["JUPyiwrYJFskUPiHa7hkeR8VUtAeFoSYbKedZNsDvCN", 1.0],
+      ]);
 
       const PRICE_CACHE_TTL_MS = 60_000;
       const PRICE_MISS_CACHE_TTL_MS = 10 * 60_000;
@@ -2565,7 +2570,7 @@ export const makeAdapterLive = (
       ): void {
         for (const mint of mints) {
           negativePriceCache.set(mint, Date.now());
-          prices[mint] = useFallback ? (fallbackPrices[mint] ?? 0) : 0;
+          prices[mint] = useFallback ? (fallbackPrices.get(mint) ?? 0) : 0;
           if (provenanceOut && !useFallback) {
             provenanceOut.set(mint, sourcesAttempted.join(","));
           }

@@ -191,6 +191,21 @@ export function lowestAprHeldPosition(
   return worst;
 }
 
+/** Candidate APR must be positive-finite: a non-positive runner never rotates. */
+function isPositiveFiniteApr(apr: number): boolean {
+  return Number.isFinite(apr) && apr > 0;
+}
+
+/** Held APR must be non-negative-finite: a flat 0% major is a valid rotation baseline. */
+function isNonNegativeFiniteApr(apr: number): boolean {
+  return Number.isFinite(apr) && apr >= 0;
+}
+
+/** Rotation multiplier must be finite and at least 1 (below 1 would rotate into worse pools). */
+function isValidRotationMultiplier(multiplier: number): boolean {
+  return Number.isFinite(multiplier) && multiplier >= 1;
+}
+
 /** Rotation fires when the candidate runner's APR >= the worst held APR times
  * the configured multiplier — a 5,000% runner vs a flat 25% major clears it;
  * a 30% marginal pool does not. */
@@ -200,10 +215,10 @@ export function shouldRotate(
   aprMult?: number,
 ): boolean {
   if (!worst) return false;
-  if (!Number.isFinite(candidateAprPct) || candidateAprPct <= 0) return false;
-  if (!Number.isFinite(worst.feeAprPct) || worst.feeAprPct < 0) return false;
+  if (!isPositiveFiniteApr(candidateAprPct)) return false;
+  if (!isNonNegativeFiniteApr(worst.feeAprPct)) return false;
   const multiplier = aprMult ?? DEFAULT_ROTATION_APR_MULT;
-  if (!Number.isFinite(multiplier) || multiplier < 1) return false;
+  if (!isValidRotationMultiplier(multiplier)) return false;
   return candidateAprPct > worst.feeAprPct && candidateAprPct >= worst.feeAprPct * multiplier;
 }
 

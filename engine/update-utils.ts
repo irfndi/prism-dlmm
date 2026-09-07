@@ -120,7 +120,12 @@ export interface GitHubRelease {
 
 export const R2_PUBLIC_URL = "https://pub-2f55c98709e74d1d900b89ec20f8f1fc.r2.dev";
 /** Outbound request headers (valid HeadersInit value form). */
-type FetchHeaders = Record<string, string>;
+/** GitHub API headers: identity + version accept always sent; Bearer auth only when a token is configured. */
+type FetchHeaders = {
+  "User-Agent": string;
+  Accept: string;
+  Authorization?: string;
+};
 export const R2_RELEASES_BUCKET = "prism-backups";
 export const R2_MANIFEST_PATHS = {
   stable: "releases/latest.json",

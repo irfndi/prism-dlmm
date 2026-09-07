@@ -17,7 +17,10 @@ function okResponse(): Response {
 }
 
 function rateLimitedResponse(resetAtSeconds?: number): Response {
-  type HeadersMap = Record<string, string>;
+  type HeadersMap = {
+    "Content-Type": string;
+    "x-ratelimit-reset"?: string;
+  };
   const headers: HeadersMap = { "Content-Type": "application/json" };
   if (resetAtSeconds !== undefined) headers["x-ratelimit-reset"] = String(resetAtSeconds);
   return new Response(JSON.stringify({ code: 429, message: "[API Gateway] Too many requests" }), {

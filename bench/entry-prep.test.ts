@@ -392,7 +392,8 @@ describe("EntryPrepService", () => {
     // 4 SOL covers the $500 half but not the $1000 single-sided full size, so
     // the auto-swap path must still run.
     let solBalance = 4_000_000_000n;
-    const tokenBalances: TokenBalanceMap = { [TOKEN_Y]: 0n };
+    const tokenBalances: TokenBalanceMap = {};
+    tokenBalances[TOKEN_Y] = 0n;
     const swapSpy = vi.fn((mint: string) => {
       if (mint === SOL_MINT) {
         solBalance = 10_000_000_000n;
@@ -500,7 +501,8 @@ describe("EntryPrepService", () => {
   it("reuses the preflighted quote when executing swaps", async () => {
     // 4 SOL: below the single-sided full-size threshold, so the swap path runs.
     let solBalance = 4_000_000_000n;
-    const tokenBalances: TokenBalanceMap = { [TOKEN_Y]: 0n };
+    const tokenBalances: TokenBalanceMap = {};
+    tokenBalances[TOKEN_Y] = 0n;
     const quote = { routePlan: [{ swapInfo: {} }], outAmount: "10000000000000" };
     const swapSpy = vi.fn((mint: string, _amount: bigint, quoteData?: JsonValue) => {
       if (mint === SOL_MINT) {
@@ -535,7 +537,8 @@ describe("EntryPrepService", () => {
 
   it("swaps USDC for both missing legs", async () => {
     let solBalance = 0n;
-    const tokenBalances: TokenBalanceMap = { [TOKEN_Y]: 0n };
+    const tokenBalances: TokenBalanceMap = {};
+    tokenBalances[TOKEN_Y] = 0n;
     const swapSpy = vi.fn((mint: string) => {
       if (mint === SOL_MINT) {
         solBalance = 10_000_000_000n;
@@ -567,7 +570,8 @@ describe("EntryPrepService", () => {
 
   it("succeeds when swapped SOL exactly covers the buffered requirement", async () => {
     let solBalance = 0n;
-    const tokenBalances: TokenBalanceMap = { [TOKEN_Y]: 0n };
+    const tokenBalances: TokenBalanceMap = {};
+    tokenBalances[TOKEN_Y] = 0n;
     const swapSpy = vi.fn((mint: string) => {
       if (mint === SOL_MINT) {
         // Exact buffered requirement for $500 of SOL at $150 plus the 50M
@@ -993,7 +997,8 @@ describe("EntryPrepService", () => {
     // or the entry would consume the exit settlement's funds (the P1 gap:
     // leg-only claims missed this path).
     const TOKEN_Z = "FakeToken2222222222222222222222222222222222";
-    const tokenBalances: TokenBalanceMap = { [TOKEN_Y]: 600_000_000n };
+    const tokenBalances: TokenBalanceMap = {};
+    tokenBalances[TOKEN_Y] = 600_000_000n;
     const swapSpy = vi.fn((mint: string) => {
       // Simulate the swap landing so the post-swap balance reconciliation
       // passes in the no-claim scenario.
@@ -1180,7 +1185,8 @@ describe("EntryPrepService", () => {
     let solBalance = 1_000_000n;
     // $600 of FAKE covers its $500 half but not the $1000 single-sided full
     // size, so the swap path runs for the SOL leg.
-    const tokenBalances: TokenBalanceMap = { [TOKEN_Y]: 600_000_000n };
+    const tokenBalances: TokenBalanceMap = {};
+    tokenBalances[TOKEN_Y] = 600_000_000n;
     const swapSpy = vi.fn((mint: string) => {
       if (mint === SOL_MINT) {
         solBalance = 10_000_000_000n;

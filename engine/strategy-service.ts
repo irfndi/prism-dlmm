@@ -838,45 +838,72 @@ export function normalEntryConfidence(
   return Math.min(0.5 + feeIlRatio * 0.05 + boost, 0.85);
 }
 
+/** Fee/IL score term. EXCLUDED (0, not trusted in either direction) when the
+ * ratio is modeled/fabricated (feeIlRatioKnown=false): GeckoTerminal's
+ * pool_fee_percentage is null for every CL pool, so gecko fees are a generic
+ * `0.0025 + binStep/1e4` base-rate MODEL — and the Data API exposes per-pool
+ * baseFeePct, so the generic model can OVERSTATE a pool's real base fee.
+ * Mirrors the [fee-il-gate] floor and the ×1.5 candidate requirement, which
+ * likewise skip the modeled ratio (program.ts). */
+function feeScoreTerm(metrics: PoolMetrics, weights: SignalWeights): number {
+  if (!metrics.feeIlRatioKnown) return 0;
+  return Math.min(metrics.feeIlRatio, MAX_FEE_IL_RATIO) * weights.feeIlRatio;
+}
+
+/** Volume-authenticity term. Unknown metrics contribute 0 (fail-closed) rather
+ * than a fabricated 1.0. */
+function authenticityScoreTerm(metrics: PoolMetrics, weights: SignalWeights): number {
+  if (!metrics.volumeAuthenticityKnown) return 0;
+  return metrics.volumeAuthenticity * weights.volumeAuthenticity;
+}
+
+/** Bin-utilization term. Unknown metrics contribute 0 (fail-closed). */
+function binUtilizationScoreTerm(metrics: PoolMetrics, weights: SignalWeights): number {
+  if (!metrics.binUtilizationKnown) return 0;
+  return metrics.binUtilization * weights.binUtilization;
+}
+
+/** Farm-APR tie-breaker term (fixed constant outside SignalWeights, so weight
+ * evolution cannot inflate farm yield above fee/IL quality signals). */
+function farmScoreTerm(metrics: PoolMetrics): number {
+  return (
+    Math.min(Math.max(metrics.farmAprPct ?? 0, 0) / FARM_APR_SCORE_REFERENCE_PCT, 1) *
+    FARM_SCORE_WEIGHT
+  );
+}
+
+/** Momentum term: bounded credit for price rising across the recent-bin
+ * window (netDriftBins), saturating at the full weight once drift reaches the
+ * reference. Negative drift contributes 0 — falling prices get no credit. */
+function momentumScoreTerm(
+  metrics: PoolMetrics,
+  momentum: { readonly referenceBins: number; readonly scoreWeight: number } | undefined,
+): number {
+  return entryMomentumBoost(
+    metrics.netDriftBins ?? 0,
+    momentum?.referenceBins ?? DEFAULT_MOMENTUM_REFERENCE_BINS,
+    momentum?.scoreWeight ?? DEFAULT_MOMENTUM_SCORE_WEIGHT,
+  );
+}
+
 export function weightedEntryScore(
   metrics: PoolMetrics,
   weights: SignalWeights,
   momentum?: { readonly referenceBins: number; readonly scoreWeight: number },
 ): number {
-  // Fee/IL is EXCLUDED from the score (not zeroed-toward-bad, not trusted in
-  // either direction) when the ratio is modeled/fabricated (feeIlRatioKnown=false).
-  // GeckoTerminal's pool_fee_percentage is null for every CL pool, so gecko fees
-  // are a generic `0.0025 + binStep/1e4` base-rate MODEL — and the Data API exposes
-  // per-pool baseFeePct, so the generic model can OVERSTATE a pool's real base fee,
-  // making the modeled ratio OVERSTATE economics. A modeled ratio therefore gets no
-  // vote at all. This is a plain weighted SUM (no normalization by total applied
-  // weight), so excluding the term simply drops its contribution and the remaining
-  // signals keep their absolute scale — the farm tie-breaker (a fixed constant
-  // outside SignalWeights) is unaffected. Mirrors the [fee-il-gate] floor and the
-  // ×1.5 candidate requirement, which likewise skip the modeled ratio (program.ts).
-  const feeContrib = metrics.feeIlRatioKnown
-    ? Math.min(metrics.feeIlRatio, MAX_FEE_IL_RATIO) * weights.feeIlRatio
-    : 0;
-  // Unknown metrics contribute 0 (fail-closed) rather than a fabricated 1.0.
-  const authContrib =
-    (metrics.volumeAuthenticityKnown ? metrics.volumeAuthenticity : 0) * weights.volumeAuthenticity;
-  const binContrib =
-    (metrics.binUtilizationKnown ? metrics.binUtilization : 0) * weights.binUtilization;
+  // Plain weighted SUM (no normalization by total applied weight), so an
+  // excluded term simply drops its contribution and the remaining signals
+  // keep their absolute scale.
   const tvlContrib = Math.min(metrics.pool.tvlUsd / 1_000_000, 1) * weights.tvlUsd;
   const velContrib = (1 / (1 + Math.abs(metrics.tvlVelocity))) * weights.tvlVelocity * 0.1;
-  const farmContrib =
-    Math.min(Math.max(metrics.farmAprPct ?? 0, 0) / FARM_APR_SCORE_REFERENCE_PCT, 1) *
-    FARM_SCORE_WEIGHT;
-  // Momentum: bounded credit for price rising across the recent-bin window
-  // (netDriftBins), saturating at the full weight once drift reaches the
-  // reference. Negative drift contributes 0 — falling prices get no credit.
-  const momentumContrib = entryMomentumBoost(
-    metrics.netDriftBins ?? 0,
-    momentum?.referenceBins ?? DEFAULT_MOMENTUM_REFERENCE_BINS,
-    momentum?.scoreWeight ?? DEFAULT_MOMENTUM_SCORE_WEIGHT,
-  );
 
   return (
-    feeContrib + authContrib + binContrib + tvlContrib + velContrib + farmContrib + momentumContrib
+    feeScoreTerm(metrics, weights) +
+    authenticityScoreTerm(metrics, weights) +
+    binUtilizationScoreTerm(metrics, weights) +
+    tvlContrib +
+    velContrib +
+    farmScoreTerm(metrics) +
+    momentumScoreTerm(metrics, momentum)
   );
 }
