@@ -13824,7 +13824,12 @@ export const program = Effect.gen(function* () {
         Error
       > {
         return Effect.gen(function* () {
-          // EXIT cooldown: persist the post-exit re-entry cooldown.
+          // EXIT cooldown: persist the post-exit re-entry cooldown ONLY after
+          // a confirmed close. Arming on the mere decision let evaporated
+          // EXITs (no tracked position, nothing closed, no tx) suppress
+          // legitimate re-entries for hours — live-forensiced 2026-08: 27
+          // ghost rotation EXITs armed churn-throttle cooldowns on an empty
+          // pool. Failed exits re-arm on the retry cycle that actually closes.
           function resolveDecisionExitCooldown(): Effect.Effect<void, Error> {
             return Effect.gen(function* () {
               const pendingCooldown = yield* resolveExitCooldown(decision, pos);
@@ -13833,8 +13838,6 @@ export const program = Effect.gen(function* () {
               }
             });
           }
-
-          if (decision.action === "EXIT") yield* resolveDecisionExitCooldown();
 
           const signalTimestamp = Date.now();
           const signalSnapshotId = yield* db
@@ -14053,6 +14056,9 @@ export const program = Effect.gen(function* () {
           }
 
           yield* dispatchDecisionExecution();
+          if (decision.action === "EXIT" && executed && executionError === undefined) {
+            yield* resolveDecisionExitCooldown();
+          }
           return {
             done: false,
             executed,

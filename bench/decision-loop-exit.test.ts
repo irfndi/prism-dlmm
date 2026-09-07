@@ -1222,3 +1222,100 @@ describe("empty-position reap (zero-liquidity on-chain account)", () => {
     expect(rugBlock, "an empty reap must not rug-block the suspect token").toBeNull();
   }, 15_000);
 });
+
+describe("exit cooldown arms only on confirmed close (ghost-rotation fix)", () => {
+  const POOL = "PoolGhostCool1111111111111111111111111111111";
+
+  function tvlDropLayer() {
+    return makeTestLayer({
+      adapter: makeAdapter({ [POOL]: makePool({ address: POOL, tvlUsd: 60_000 }) }),
+      configOverrides: {
+        watchlistPools: [POOL],
+        tvlDropExitPct: 0.3,
+        minReentryCooldownMs: 3_600_000,
+      },
+    });
+  }
+
+  function previousSnapshot() {
+    return {
+      poolAddress: POOL,
+      timestamp: Date.now() - 600_000,
+      activeBinId: 5000,
+      tvlUsd: 100_000,
+      volume24hUsd: 30_000,
+      fees24hUsd: 300,
+      apr: 60,
+      currentPrice: 150,
+      binStep: 10,
+      tokenXSymbol: "SOL",
+      tokenYSymbol: "USDC",
+      binArray: makeBinArray(),
+    };
+  }
+
+  it("does NOT arm a cooldown when the EXIT evaporates (live position, paper mode)", async () => {
+    const layer = tvlDropLayer();
+    const test = Effect.gen(function* () {
+      const db = yield* DbService;
+      yield* db.savePosition(
+        makePosition({
+          poolAddress: POOL,
+          positionId: "ghost-live-pos",
+          positionPubKey: "ghost-live-pos",
+          depositedUsd: 1_000,
+          currentValueUsd: 1_000,
+        }),
+      );
+      yield* db.saveSnapshot(previousSnapshot());
+      yield* Effect.raceFirst(program, Effect.sleep(2_000));
+      const audit = yield* AuditService;
+      const decisions = yield* audit.getRecentDecisions(50);
+      const cooldown = yield* db
+        .getPoolCooldown(POOL)
+        .pipe(Effect.catch(() => Effect.succeed(null)));
+      return { decisions, cooldown };
+    });
+    const { decisions, cooldown } = await Effect.runPromise(
+      asOwner<
+        Effect.Effect<{ decisions: ReadonlyArray<DecisionRow>; cooldown: unknown }, Error, never>
+      >(Effect.provide(test, layer)),
+    );
+    const exits = decisions.filter((d) => d.poolAddress === POOL && d.action === "EXIT");
+    expect(exits.length).toBeGreaterThanOrEqual(1);
+    expect(
+      exits.every((d) => !d.executed),
+      `live-position EXIT must evaporate in paper mode: ${stringifySafe(exits)}`,
+    ).toBe(true);
+    expect(cooldown, `evaporated EXIT armed a cooldown: ${stringifySafe(cooldown)}`).toBeNull();
+  }, 15_000);
+
+  it("STILL arms a cooldown when the EXIT actually closes (paper position)", async () => {
+    const layer = tvlDropLayer();
+    const test = Effect.gen(function* () {
+      const db = yield* DbService;
+      yield* db.savePosition(
+        makePosition({ poolAddress: POOL, depositedUsd: 1_000, currentValueUsd: 1_000 }),
+      );
+      yield* db.saveSnapshot(previousSnapshot());
+      yield* Effect.raceFirst(program, Effect.sleep(2_000));
+      const audit = yield* AuditService;
+      const decisions = yield* audit.getRecentDecisions(50);
+      const cooldown = yield* db
+        .getPoolCooldown(POOL)
+        .pipe(Effect.catch(() => Effect.succeed(null)));
+      return { decisions, cooldown };
+    });
+    const { decisions, cooldown } = await Effect.runPromise(
+      asOwner<
+        Effect.Effect<{ decisions: ReadonlyArray<DecisionRow>; cooldown: unknown }, Error, never>
+      >(Effect.provide(test, layer)),
+    );
+    const exits = decisions.filter((d) => d.poolAddress === POOL && d.action === "EXIT");
+    expect(
+      exits.some((d) => d.executed),
+      `paper EXIT must execute: ${stringifySafe(exits)}`,
+    ).toBe(true);
+    expect(cooldown, "confirmed close must still arm the re-entry cooldown").not.toBeNull();
+  }, 15_000);
+});
