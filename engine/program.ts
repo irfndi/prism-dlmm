@@ -5989,6 +5989,10 @@ export const program = Effect.gen(function* () {
   let marketRankedPools: ReadonlyArray<MarketPoolRank> = [];
   let lastMarketRefreshAt = 0;
   const marketScanPools = new Set<string>();
+  // RugCheck reports cached for the process lifetime (security facts change
+  // slowly; mints recur across discovery pages). Previously constructed per
+  // fallen-angel refresh invocation, refetching identical mints every cycle.
+  const rugcheckCache = new Map<string, RugCheckReport | null>();
   // Per-cycle fee APR observations keyed by pool. Rotation uses the current
   // cycle's values; `measured` keeps modeled gecko/heuristic fees out.
   const poolFeeAprByAddress = new Map<
@@ -6322,7 +6326,6 @@ export const program = Effect.gen(function* () {
         .pipe(Effect.catch(() => Effect.succeed([] as ReadonlyArray<DiscoveredPool>)));
       if (discovered.length === 0) return;
 
-      const rugcheckCache = new Map<string, RugCheckReport | null>();
       const fetchSignals = async (pool: {
         readonly address: string;
         readonly tokenX: string;
@@ -8714,13 +8717,52 @@ export const program = Effect.gen(function* () {
   // pool so the volume/fee gates skip heuristic fiction instead of acting on
   // it. Data-API-exclusive safety signals are never sourced from gecko or
   // dexscreener: they stay null and the screener fails open on null.
+  // Runner APR tracking: map write stays UNCONDITIONAL (rotation reads every
+  // incumbent's APR regardless of runner-enabled); only the SQLite ring is gated.
+  function trackRunnerApr(
+    poolAddress: string,
+    poolFeeAprPct: number,
+    tvlUsd: number,
+    measured: boolean,
+  ): Effect.Effect<
+    { readonly runnerConsecutiveCount: number; readonly runnerAprOutlier: boolean },
+    never
+  > {
+    return Effect.gen(function* () {
+      poolFeeAprByAddress.set(poolAddress, { feeAprPct: poolFeeAprPct, tvlUsd, measured });
+      // Without runner or rotation no consumer reads these (isMarketRunner checks
+      // enabled; mult doubles only on outlier) — stay at fail-closed defaults.
+      const runnerTracking =
+        config.marketScanRunnerEnabled === true || config.marketScanRotationEnabled === true;
+      if (!runnerTracking) return { runnerConsecutiveCount: 0, runnerAprOutlier: false };
+      const runnerFloorApr = config.marketScanRunnerMinFeeApr ?? DEFAULT_RUNNER_MIN_FEE_APR;
+      const obs = yield* recordRunnerAprObservation(poolAddress, poolFeeAprPct, runnerFloorApr);
+      // Euphoria damper: CURRENT measured APR spiking vs its OWN recent history
+      // suppresses runner classification from admission + rotation superiority.
+      // Cold-start (<3 prior obs) fail-opens; durable spikes re-classify as
+      // history catches up.
+      const outlier = resolveRunnerAprOutlier(
+        config.runnerAprOutlierEnabled,
+        obs.priorAprs,
+        poolFeeAprPct,
+        config.runnerAprOutlierPercentile,
+      );
+      return { runnerConsecutiveCount: obs.consecutiveCount, runnerAprOutlier: outlier };
+    });
+  }
+
   function resolvePoolStats(poolAddress: string): Effect.Effect<PoolStatsOutcome, Error> {
     return Effect.gen(function* () {
-      const rawPool = yield* adapter.getPoolState(poolAddress);
+      // Lazy stats: datapi is cached 30s and hits near-100% on watched pools —
+      // check it FIRST so the adapter skips its reserve + price reads entirely.
+      const datapiStats = yield* meteoraDatapi.getPoolData(poolAddress);
+      const rawPool = yield* adapter.getPoolState(
+        poolAddress,
+        datapiStats !== null ? { skipStats: true } : undefined,
+      );
       const binArray = yield* adapter.getBinArray(poolAddress);
       pushBinHistory(poolAddress, rawPool.activeBinId);
       binStepByAddress.set(poolAddress, rawPool.binStep);
-      const datapiStats = yield* meteoraDatapi.getPoolData(poolAddress);
       function fetchSecondaryPoolStats(priceFeeRate: number) {
         return Effect.gen(function* () {
           const geckoStats =
@@ -8750,6 +8792,7 @@ export const program = Effect.gen(function* () {
       // the SAME trust posture as gecko (measured volume/TVL, modeled fees, NO
       // safety signals) and is enriched through the same `enrichPoolFromGecko`
       // path, so no new `statsSource` value ripples through the trust model.
+      // skipStats zeroes heuristic tvl — the overlay overwrites it on this path.
       const pool =
         datapiStats !== null
           ? enrichPoolWithDatapi(rawPool, datapiStats)
@@ -8762,29 +8805,11 @@ export const program = Effect.gen(function* () {
       // floor enters with the LAUNCH posture instead of the flat normal
       // posture. Modeled gecko / heuristic fees never classify a runner.
       const poolFeeAprPct = pool.tvlUsd > 0 ? (pool.fees24hUsd * 365 * 100) / pool.tvlUsd : 0;
-      const runnerFloorApr = config.marketScanRunnerMinFeeApr ?? DEFAULT_RUNNER_MIN_FEE_APR;
-      const runnerAprObservation = yield* recordRunnerAprObservation(
+      const { runnerConsecutiveCount, runnerAprOutlier } = yield* trackRunnerApr(
         poolAddress,
         poolFeeAprPct,
-        runnerFloorApr,
-      );
-      const runnerConsecutiveCount = runnerAprObservation.consecutiveCount;
-      poolFeeAprByAddress.set(poolAddress, {
-        feeAprPct: poolFeeAprPct,
-        tvlUsd: pool.tvlUsd,
-        measured: pool.statsSource === "datapi",
-      });
-      // Euphoria damper (ORCA's strongest sell signal — confidence-at-extreme
-      // marks tops, not continuation): a runner whose CURRENT measured APR is
-      // a vertical spike vs its OWN recent history is suppressed from BOTH
-      // admission and rotation superiority. A cold-start pool (<3 prior obs)
-      // fail-opens. When the spike proves durable the self-rank falls as
-      // history catches up and the pool classifies again.
-      const runnerAprOutlier = resolveRunnerAprOutlier(
-        config.runnerAprOutlierEnabled,
-        runnerAprObservation.priorAprs,
-        poolFeeAprPct,
-        config.runnerAprOutlierPercentile,
+        pool.tvlUsd,
+        pool.statsSource === "datapi",
       );
       if (runnerAprOutlier) {
         console.info(

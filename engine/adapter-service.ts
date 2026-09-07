@@ -4221,7 +4221,7 @@ export const makeAdapterLive = (
             return rows.length > 0 ? scoreWashEvidence(rows) : null;
           }).pipe(Effect.catch(() => Effect.succeed(null))),
 
-        getPoolState: (poolAddress) =>
+        getPoolState: (poolAddress, opts) =>
           Effect.gen(function* () {
             const dlmm = yield* getDlmm(poolAddress);
             const lbPair = dlmm.lbPair;
@@ -4240,10 +4240,15 @@ export const makeAdapterLive = (
             })();
             const activeBin = yield* memoizedActiveBin(poolAddress, dlmm);
 
-            const [tokenXMeta, tokenYMeta, stats] = yield* Effect.all([
+            // skipStats (datapi-hit path): tvl/volume/fees are overwritten by the
+            // overlay — skip the 2 reserve reads + price chain entirely.
+            const stats =
+              opts?.skipStats === true
+                ? { tvlUsd: 0, volume24hUsd: 0, fees24hUsd: 0, apr: 0 }
+                : yield* fetchPoolStats(poolAddress);
+            const [tokenXMeta, tokenYMeta] = yield* Effect.all([
               getTokenMeta(lbPair.tokenXMint.toBase58()),
               getTokenMeta(lbPair.tokenYMint.toBase58()),
-              fetchPoolStats(poolAddress),
             ]);
 
             // The TTL clock starts when the pool-state ASSEMBLY completes, not

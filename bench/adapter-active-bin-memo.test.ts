@@ -207,6 +207,22 @@ describe("active-bin memoization (RPC dedup)", () => {
     vi.restoreAllMocks();
     expect(dlmm.getBinsAroundActiveBin).toHaveBeenCalledTimes(2);
   });
+  it("skipStats skips reserve + price reads (datapi-hit path)", async () => {
+    const balanceSpy = vi.spyOn(Connection.prototype, "getTokenAccountBalance");
+    balanceSpy.mockClear();
+    await Effect.runPromise(
+      Effect.provide(
+        Effect.gen(function* () {
+          const adapter = yield* AdapterService;
+          const pool = yield* adapter.getPoolState(POOL_ADDRESS, { skipStats: true });
+          expect(pool.tvlUsd).toBe(0);
+          expect(pool.statsSource).toBe("heuristic");
+        }),
+        makeAdapterLayer(),
+      ),
+    );
+    expect(balanceSpy).not.toHaveBeenCalled();
+  });
 
   it("getPriceScale returns 10^(decX - decY) without fetching the active bin", async () => {
     const layer = makeAdapterLayer();

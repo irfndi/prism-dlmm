@@ -161,7 +161,12 @@ export interface AdapterApi {
     Error
   >;
   readonly getNativeSolBalance: () => Effect.Effect<bigint, Error>;
-  readonly getPoolState: (poolAddress: string) => Effect.Effect<PoolState, Error>;
+  readonly getPoolState: (
+    poolAddress: string,
+    // skipStats: datapi-hit path — tvl/volume/fees get overwritten by the
+    // overlay, so the adapter skips its reserve + price reads entirely.
+    opts?: { readonly skipStats?: boolean },
+  ) => Effect.Effect<PoolState, Error>;
   readonly getBinArray: (poolAddress: string) => Effect.Effect<BinArray, Error>;
   /**
    * Legacy raw-price → real-price scale factor for a pool (pricePerToken /

@@ -16,6 +16,10 @@
 
 // 0.4 RPS sustained — comfortably under the 0.5 RPS keyless refill rate.
 const MIN_JUPITER_REQUEST_INTERVAL_MS = 2_500;
+// Keyed tier paces faster (1 RPS — conservative: exact keyed quota undocumented,
+// so this stays modest). Keyless keeps the 2500ms safe rate. No new env knob:
+// presence of JUPITER_API_KEY (already branched on at every call site) selects.
+const KEYED_JUPITER_REQUEST_INTERVAL_MS = 1_000;
 // Ceiling on any single pacing wait: beyond this the slot is treated as
 // stale (clock anomaly / cross-isolation state) and reset.
 const MAX_JUPITER_SLOT_WAIT_MS = 5 * 60_000;
@@ -60,7 +64,10 @@ export function resetJupiterGateForTest(): void {
 }
 
 function intervalMs(): number {
-  return testIntervalMs !== undefined ? testIntervalMs : MIN_JUPITER_REQUEST_INTERVAL_MS;
+  if (testIntervalMs !== undefined) return testIntervalMs;
+  // ponytail: env read per call is ~ns; process env is static per process.
+  const keyed = (process.env.JUPITER_API_KEY ?? "").trim() !== "";
+  return keyed ? KEYED_JUPITER_REQUEST_INTERVAL_MS : MIN_JUPITER_REQUEST_INTERVAL_MS;
 }
 
 function baseCooldownMs(): number {
