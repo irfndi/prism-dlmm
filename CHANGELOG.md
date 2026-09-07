@@ -2,6 +2,12 @@
 
 All notable changes to Prism are documented here.
 
+## [0.2.39] — 2026-09-07
+
+### Changed
+
+- **RPC throughput (zero-cost).** `resolvePoolStats` checks the never-failing Data API first so `getPoolState` skips reserve + price reads via `skipStats` on hits; keyed Jupiter tier paces 1s vs 2.5s keyless; saturated `lava.build` keyless fallback replaced with `api.mainnet.solana.com` (7192 vs 7 failures/24h live). Paper cycles 150s → ~74s, retries ~110 → ~16/cycle. No gate, threshold, or ranking change. 2128/2128 green.
+
 ## [0.2.38] — 2026-09-07
 
 ### Fixed
