@@ -2,6 +2,12 @@
 
 All notable changes to Prism are documented here.
 
+## [0.2.38] — 2026-09-07
+
+### Fixed
+
+- **Exit cooldown arms only on confirmed close.** Evaporated EXITs (no tracked position, nothing closed, no tx) no longer arm the re-entry churn throttle — live-forensiced 27 ghost rotation EXITs suppressing re-entries on an empty pool. Failed exits re-arm on the retry cycle that closes. Regression tests both directions; 2127/2127 green.
+
 ## [0.2.37] — 2026-09-07
 
 ### Added
