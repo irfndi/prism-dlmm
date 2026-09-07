@@ -71,6 +71,7 @@ type MintAuthorities = { mintAuthority: string | null; freezeAuthority: string |
 
 function makeAdapter(hooks: {
   getMintAuthorities?: (mint: string) => Effect.Effect<MintAuthorities, unknown>;
+  getBinArray?: () => Effect.Effect<ReturnType<typeof makeBinArray>, unknown>;
 }): AdapterApi {
   // SAFETY: This test fixture is constructed to satisfy the asserted service/domain contract and is exercised by the surrounding test.
   return {
@@ -81,7 +82,7 @@ function makeAdapter(hooks: {
       Effect.succeed(new Map<string, { amountAtomic: bigint; decimals: number }>()),
     getNativeSolBalance: () => Effect.succeed(0n),
     getPoolState: () => Effect.succeed(makePool({ address: POOL })),
-    getBinArray: () => Effect.succeed(makeBinArray()),
+    getBinArray: hooks.getBinArray ?? (() => Effect.succeed(makeBinArray())),
     getPositions: () => Effect.succeed([]),
     getAllWalletPositions: () => Effect.succeed([]),
     simulateRebalance: () =>
@@ -433,6 +434,81 @@ describe("safety screening + blacklist enforcement (Wave 2)", () => {
     );
     expect(decisions.some((d) => d.reasoning.includes("[safety]"))).toBe(true);
     expect(decisions.filter((d) => d.action === "EXIT" && d.executed)).toHaveLength(1);
+  }, 15_000);
+
+  it("skips the bins RPC for a safety-rejected pool with no held positions", async () => {
+    writeBlacklistFiles([], [TOKEN_Y]);
+    let binArrayCalls = 0;
+    const layer = makeTestLayer({
+      adapter: makeAdapter({
+        getBinArray: () =>
+          Effect.sync(() => {
+            binArrayCalls += 1;
+            return makeBinArray();
+          }),
+      }),
+      blacklist: Effect.runSync(
+        Effect.provide(
+          Effect.gen(function* () {
+            return yield* BlacklistService;
+          }),
+          BlacklistLive({ deployerBlacklistPath: deployerPath, tokenBlacklistPath: tokenPath }),
+        ),
+      ),
+    });
+
+    const decisions = await runOneCycle(layer);
+    const forPool = decisions.filter((d) => d.poolAddress === POOL);
+    expect(
+      forPool,
+      `expected exactly one recorded (rejected) decision, got: ${stringifySafe(forPool)}`,
+    ).toHaveLength(1);
+    expect(forPool[0]!.riskResult.approved).toBe(false);
+    expect(binArrayCalls, "rejected positionless pool must not fetch bins").toBe(0);
+  }, 15_000);
+
+  it("still fetches bins for a safety-rejected pool with a held position", async () => {
+    writeBlacklistFiles([], [TOKEN_Y]);
+    let binArrayCalls = 0;
+    const layer = makeTestLayer({
+      adapter: makeAdapter({
+        getBinArray: () =>
+          Effect.sync(() => {
+            binArrayCalls += 1;
+            return makeBinArray();
+          }),
+      }),
+      blacklist: Effect.runSync(
+        Effect.provide(
+          Effect.gen(function* () {
+            return yield* BlacklistService;
+          }),
+          BlacklistLive({ deployerBlacklistPath: deployerPath, tokenBlacklistPath: tokenPath }),
+        ),
+      ),
+      configOverrides: { trailingStopConfirmCycles: 1 },
+    });
+    const test = Effect.gen(function* () {
+      const db = yield* DbService;
+      yield* db.savePosition(
+        makePosition({
+          poolAddress: POOL,
+          depositedUsd: 1_000,
+          currentValueUsd: 1_000,
+          highestValueUsd: 2_000,
+          entryPriceUsd: 150,
+          entryAmountXUsd: 500,
+          entryAmountYUsd: 500,
+          timestamp: Date.now() - 86_400_000,
+        }),
+      );
+      yield* Effect.raceFirst(program, Effect.sleep(2_000));
+      return binArrayCalls;
+    });
+    const calls = await Effect.runPromise(
+      asOwner<Effect.Effect<number, Error, never>>(Effect.provide(test, layer)),
+    );
+    expect(calls, "held-position pool needs bins for protective exits").toBeGreaterThan(0);
   }, 15_000);
 
   it("rejects a pool whose token has freeze authority enabled per the Data API", async () => {

@@ -864,6 +864,28 @@ function toRiskPosition(pos: PositionRecord): Position {
   };
 }
 
+/** Bins-fetch skip: a safety-rejected pool with no held positions needs no bins,
+ * snapshot, or metrics (saves 1-2 Solana RPC per rejected pool). Held-position
+ * pools still fetch bins so protective exits keep running. */
+export function isSafetyBinsSkippable(
+  trackedPositions: Map<string, PositionRecord>,
+  poolAddress: string,
+  safetyRejected: boolean,
+): boolean {
+  return safetyRejected && positionsForPool(trackedPositions, poolAddress).length === 0;
+}
+
+/** Price-drift context for fee/IL metrics from the previous snapshot (undefined on cold start). */
+export function snapshotPriceDrift(
+  previousSnapshot: PoolSnapshot | undefined,
+): { readonly previousPrice: number; readonly previousTimestamp: number } | undefined {
+  if (previousSnapshot === undefined) return undefined;
+  return {
+    previousPrice: previousSnapshot.currentPrice,
+    previousTimestamp: previousSnapshot.timestamp,
+  };
+}
+
 /** All tracked positions on a pool — a pool may hold several (tight+wide pairs). */
 export function positionsForPool(
   trackedPositions: Map<string, PositionRecord>,
@@ -8652,10 +8674,9 @@ export const program = Effect.gen(function* () {
 
   // ─── Per-pool evaluation ───────────────────────────────────────────────────
 
-  /** Enriched pool stats + runner classification inputs for one pool-cycle. */
+  /** Enriched pool stats + runner classification inputs for one pool-cycle (bins excluded: fetched after the safety screen). */
   interface PoolStatsOutcome {
     readonly pool: PoolState;
-    readonly binArray: Effect.Success<ReturnType<typeof adapter.getBinArray>>;
     readonly datapiStats: MeteoraPoolStats | null;
     readonly poolFeeAprPct: number;
     readonly runnerAprOutlier: boolean;
@@ -8760,7 +8781,9 @@ export const program = Effect.gen(function* () {
         poolAddress,
         datapiStats !== null ? { skipStats: true } : undefined,
       );
-      const binArray = yield* adapter.getBinArray(poolAddress);
+      // Bins are fetched by the caller AFTER the safety screen: a
+      // safety-rejected pool with no held positions needs no bins,
+      // snapshot, or metrics (saves 1-2 Solana RPC per rejected pool).
       pushBinHistory(poolAddress, rawPool.activeBinId);
       binStepByAddress.set(poolAddress, rawPool.binStep);
       function fetchSecondaryPoolStats(priceFeeRate: number) {
@@ -8818,7 +8841,6 @@ export const program = Effect.gen(function* () {
       }
       return {
         pool,
-        binArray,
         datapiStats,
         poolFeeAprPct,
         runnerAprOutlier,
@@ -14569,14 +14591,23 @@ export const program = Effect.gen(function* () {
       function runPoolEntryGates() {
         return Effect.gen(function* () {
           const stats = yield* resolvePoolStats(poolAddress);
-          const {
-            pool,
-            binArray,
-            datapiStats,
-            poolFeeAprPct,
-            runnerAprOutlier,
-            runnerConsecutiveCount,
-          } = stats;
+          const { pool, datapiStats, poolFeeAprPct, runnerAprOutlier, runnerConsecutiveCount } =
+            stats;
+          // Safety screening records a rejected ENTER gate but does not stop
+          // management of an already-held position. A positive blacklist,
+          // freeze, transfer-tax or mint-authority signal must block new
+          // capital; the existing position still needs its protective exits.
+          // It runs BEFORE the bins fetch: a rejected pool with no held
+          // positions needs no bins, snapshot, or metrics (saves 1-2 Solana
+          // RPC per rejected pool). Screen inputs (mints, datapi flags,
+          // cached authorities) cost ~0 RPC steady-state.
+          const safetyRejection = yield* screenPoolSafety(poolAddress, cycleId, pool, datapiStats);
+          const safetyRejected = safetyRejection !== null;
+          if (isSafetyBinsSkippable(trackedPositions, poolAddress, safetyRejected)) {
+            const halt: AgentDecision[] = [];
+            return { halt, safetyRejected };
+          }
+          const binArray = yield* adapter.getBinArray(poolAddress);
           const isMarketRunner = (addr: string): boolean =>
             !runnerAprOutlier &&
             isMarketRunnerPool({
@@ -14593,23 +14624,11 @@ export const program = Effect.gen(function* () {
 
           const snap = yield* capturePoolSnapshot(poolAddress, pool, binArray);
           const { previousSnapshot, w15Signals } = snap;
-          // Safety screening records a rejected ENTER gate but does not stop
-          // management of an already-held position. A positive blacklist,
-          // freeze, transfer-tax or mint-authority signal must block new
-          // capital; the existing position still needs its protective exits.
-          const safetyRejection = yield* screenPoolSafety(poolAddress, cycleId, pool, datapiStats);
-          const safetyRejected = safetyRejection !== null;
-
           const metrics = strategy.computeMetrics(
             pool,
             binArray,
             previousSnapshot?.tvlUsd ?? 0,
-            previousSnapshot
-              ? {
-                  previousPrice: previousSnapshot.currentPrice,
-                  previousTimestamp: previousSnapshot.timestamp,
-                }
-              : undefined,
+            snapshotPriceDrift(previousSnapshot),
           );
 
           if (

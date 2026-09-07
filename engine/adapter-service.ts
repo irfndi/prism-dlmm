@@ -1932,6 +1932,7 @@ export const makeAdapterLive = (
         : null;
 
       const DLMM_CACHE_TTL_MS = 5 * 60 * 1000;
+      const dlmmCacheTtlMs = config.dlmmCacheTtlMs ?? DLMM_CACHE_TTL_MS;
       const rpcIntervalMs = config.rpcMinIntervalMs ?? RPC_MIN_INTERVAL_MS;
       let nextRpcStartAt = 0;
       let rpcRoundRobinCursor = 0;
@@ -2025,7 +2026,7 @@ export const makeAdapterLive = (
           Effect.flatMap((pubkey) =>
             Effect.cachedInvalidateWithTTL(
               rpcCall((conn) => createDlmm(conn, pubkey)),
-              DLMM_CACHE_TTL_MS,
+              dlmmCacheTtlMs,
             ),
           ),
         );

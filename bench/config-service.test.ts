@@ -49,6 +49,30 @@ describe("ConfigService MIN_REENTRY_COOLDOWN_MS (same-pool re-entry churn thrott
   });
 });
 
+describe("ConfigService DLMM_CACHE_TTL_MS (DLMM client cache)", () => {
+  afterEach(() => {
+    vi.unstubAllEnvs();
+  });
+
+  it("defaults to 5 min (300_000) when unset", async () => {
+    const cfg = await loadConfig();
+    expect(cfg.dlmmCacheTtlMs).toBe(300_000);
+  });
+
+  it("carries a custom value", async () => {
+    vi.stubEnv("DLMM_CACHE_TTL_MS", "900000");
+    const cfg = await loadConfig();
+    expect(cfg.dlmmCacheTtlMs).toBe(900_000);
+  });
+
+  it("clamps below the 60s minimum and above the 1h maximum", async () => {
+    vi.stubEnv("DLMM_CACHE_TTL_MS", "1000");
+    expect((await loadConfig()).dlmmCacheTtlMs).toBe(60_000);
+    vi.stubEnv("DLMM_CACHE_TTL_MS", "999999999");
+    expect((await loadConfig()).dlmmCacheTtlMs).toBe(3_600_000);
+  });
+});
+
 describe("ConfigService pool PnL kill switch", () => {
   afterEach(() => {
     vi.unstubAllEnvs();

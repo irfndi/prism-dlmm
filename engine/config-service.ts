@@ -148,6 +148,8 @@ export interface AppConfig {
   readonly solanaRpcFallbackUrl: string;
   /** Minimum interval between Solana RPC requests (ms). Defaults to 150. */
   readonly rpcMinIntervalMs?: number;
+  /** DLMM client cache TTL per pool (ms). Defaults to 300000 (5 min). */
+  readonly dlmmCacheTtlMs?: number;
   readonly paperTrading: boolean;
   readonly autonomousTokenMode: AutonomousTokenMode;
   readonly settlementAsset: SettlementAsset;
@@ -1110,6 +1112,9 @@ const loadConfig = Effect.gen(function* () {
   // (api.mainnet-beta.solana.com) throttle at ~4 req/s per method, so the
   // default is conservative; paid/high-tier endpoints can lower it.
   const rpcMinIntervalMs = yield* validatedNumber("RPC_MIN_INTERVAL_MS", 0, 150, 10_000);
+  // DLMM.create costs 1-2 Solana RPC reads per pool; the lbPair immutable
+  // fields do not change, so a longer TTL skips re-creation on repeat cycles.
+  const dlmmCacheTtlMs = yield* validatedNumber("DLMM_CACHE_TTL_MS", 60_000, 300_000, 3_600_000);
   const paperTrading = yield* Config.boolean("PAPER_TRADING").pipe(
     Effect.orElseSucceed(() => true),
   );
@@ -2276,6 +2281,7 @@ const loadConfig = Effect.gen(function* () {
     solanaRpcUrl,
     solanaRpcFallbackUrl,
     rpcMinIntervalMs,
+    dlmmCacheTtlMs,
     paperTrading,
     autonomousTokenMode,
     settlementAsset,
